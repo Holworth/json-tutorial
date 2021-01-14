@@ -18,7 +18,17 @@ static int test_pass = 0;
         }\
     } while(0)
 
+#define EXPECT_EQ_DOUBLE(expect, actual) EXPECT_EQ_BASE((expect) == (actual), expect, actual, "%lf")
+
 #define EXPECT_EQ_INT(expect, actual) EXPECT_EQ_BASE((expect) == (actual), expect, actual, "%d")
+
+#define TEST_NUMBER(expect, json) \
+    do  {\
+        lept_value v;\
+        EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, json));\
+        EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type(&v)); \
+        EXPECT_EQ_DOUBLE(expect, lept_get_number(&v));\
+    } while (0)  
 
 static void test_parse_null() {
     lept_value v;
@@ -39,6 +49,18 @@ static void test_parse_false() {
     v.type = LEPT_NULL;
     EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, "   false   "));
     EXPECT_EQ_INT(LEPT_FALSE, lept_get_type(&v));
+}
+
+static void test_parse_number() {
+    TEST_NUMBER(1.0, "1.0");
+    TEST_NUMBER(-1.0, "-1.000");
+    TEST_NUMBER(0, "0.0");
+    TEST_NUMBER(0, "-0");
+    TEST_NUMBER(0, "-0.0");
+    TEST_NUMBER(1e5, "1e5");
+    TEST_NUMBER(1e-5, "1.000e-5");
+    TEST_NUMBER(1.234e5, "1.234E5");
+    TEST_NUMBER(1.234e-5, "1.234E-5");
 }
 
 static void test_parse_expect_value() {
@@ -75,6 +97,7 @@ static void test_parse() {
     test_parse_null();
     test_parse_true();
     test_parse_false();
+    test_parse_number();
     test_parse_expect_value();
     test_parse_invalid_value();
     test_parse_root_not_singular();

@@ -14,6 +14,9 @@ extern errno;
 
 #define EXPECT(c, ch)       do { assert(*c->json == (ch)); c->json++; } while(0)
 #define ISDIGIT_1TO9(ch)    ((ch) >= '1' && (ch) <= '9')
+#define HIGH_SURRO(u) ((u) >= 0xD800 && (u) <= 0xDBFF)
+#define LOW_SURRO(u) ((u) >= 0xDC00 && (u) <= 0xDFFF)
+#define COMBINE_HIGH_LOW_SURRO(h, l)   (0x10000 + ((h) - 0xD800) * 0x400 + ((l) - 0xDC00))
 
 const size_t stack_init_size = 256;
 
@@ -38,7 +41,6 @@ void lept_context_init(lept_context *c) {
  */
 void *lept_context_push(lept_context *c, const char *src, size_t size) {
     assert (c != NULL);
-    // add 1.5 capacity
     while (c->top + size > c->capacity) 
         c->capacity += c->capacity / 2;
     // Allocate new memory space
@@ -106,16 +108,56 @@ static int lept_parse_literal(lept_context *c, lept_value *v, const char *t)
     }
 }
 
+static int lept_parse_hex4 (lept_context *c, unsigned *u)
+{
+    *u = 0;
+    // Assert that there must be 4 hex characters
+    for (int i = 0; i < 4; ++i) {
+        char ch = *(c->json + i);
+        if (isdigit (ch) || (ch <= 'F' && ch >= 'A'))
+            *u = *u * 16 + (isdigit (ch) ? ch - '0' : 10 + ch - 'A');
+        else
+            return 0;
+    }
+    c->json += 4;
+    return 1;
+}
+
+static int lept_encode_utf8 (lept_context *c, unsigned u)
+{
+    assert (u <= 0x10FFFF);
+    if (u <= 0x007F) {
+        lept_context_push_single_char (c, (char)u);
+        return 1;
+    } else if (u <= 0x07FF) {
+        lept_context_push_single_char (c, 0xC0 | ((u >> 6) & 0x1F));
+        lept_context_push_single_char (c, 0x80 | ( u       & 0x3F));
+        return 2;
+    } else if (u <= 0xFFFF) {
+        lept_context_push_single_char (c, 0xE0 | ((u >> 12) & 0x0F));
+        lept_context_push_single_char (c, 0x80 | ((u >>  6) & 0x3F));
+        lept_context_push_single_char (c, 0x80 | ( u        & 0x3F));
+        return 3;
+    } else {
+        lept_context_push_single_char (c, 0xF0 | ((u >> 18) & 0x07));
+        lept_context_push_single_char (c, 0x80 | ((u >> 12) & 0x3F));
+        lept_context_push_single_char (c, 0x80 | ((u >>  6) & 0x3F));
+        lept_context_push_single_char (c, 0x80 | ( u        & 0x3F));
+        return 4;
+    }
+    return 0;
+}
+
 static int lept_parse_number(lept_context *c, lept_value *v)
 {
     char *tmp;
-    char ch = *c->json;
-    char *start = *c->json == '-' ? c->json+1 : c->json;
+    // char ch = *c->json;
+    const char *start = *c->json == '-' ? c->json+1 : c->json;
 
     int check1 = ISDIGIT_1TO9(*start) || *start == '0' && !isdigit(*(start+1));
     int check2 = 1;
 
-    char *find_dot = c->json;
+    const char *find_dot = c->json;
     while (*find_dot && *find_dot != '.') 
         ++find_dot;
 
@@ -149,7 +191,7 @@ static int lept_parse_string(lept_context *c, lept_value *v) {
     assert(c != NULL && v != NULL);
     // Note that EXPECT will increase c->json
     EXPECT(c, '\"');
-    char *tmp = c->json;
+    // const char *tmp = c->json;
     int len = 0;
     for (;;) {
         switch (*c->json)
@@ -162,23 +204,60 @@ static int lept_parse_string(lept_context *c, lept_value *v) {
             }
             // Deal with escape
             case '\\': {
-                switch (*(c->json+1))
+                c->json++;
+                switch (*(c->json))
                 {
-                    case '\"': lept_context_push_single_char(c, '\"'); break;
-                    case '\\': lept_context_push_single_char(c, '\\'); break;
-                    case '/' : lept_context_push_single_char(c, '/') ; break;
-                    case 'b' : lept_context_push_single_char(c, '\b'); break;
-                    case 'f' : lept_context_push_single_char(c, '\f'); break;
-                    case 'n' : lept_context_push_single_char(c, '\n'); break;
-                    case 'r' : lept_context_push_single_char(c, '\r'); break;
-                    case 't' : lept_context_push_single_char(c, '\t'); break;
+                    case '\"': lept_context_push_single_char(c, '\"'); goto increament;
+                    case '\\': lept_context_push_single_char(c, '\\'); goto increament;
+                    case '/' : lept_context_push_single_char(c, '/') ; goto increament;
+                    case 'b' : lept_context_push_single_char(c, '\b'); goto increament;
+                    case 'f' : lept_context_push_single_char(c, '\f'); goto increament;
+                    case 'n' : lept_context_push_single_char(c, '\n'); goto increament;
+                    case 'r' : lept_context_push_single_char(c, '\r'); goto increament;
+                    case 't' : lept_context_push_single_char(c, '\t'); goto increament;
 
+                    // Do increament for common case
+                    increament:
+                        ++c->json, ++len;
+                        break;
+
+                    // Do unicode parse
+                    case 'u' : 
+                    {
+                        // Store unicode
+                        unsigned u, h, l;
+                        ++c->json;
+                        // Note that lept_parse_hex4 will increate the json
+                        // attribute itself
+                        if (!lept_parse_hex4 (c, &h)) 
+                            return LEPT_PARSE_INVALID_UNICODE_HEX;
+
+                        if (HIGH_SURRO(h)) {
+                            // Judge if the next two characters imply another 
+                            // unicode.
+                            if (*(c->json) != '\\' || *(c->json+1) != 'u') 
+                                return LEPT_PARSE_INVALID_UNICODE_SURROGATE;
+                            else 
+                            {
+                                c->json += 2;
+                                if (!lept_parse_hex4 (c, &l) || !LOW_SURRO(l))
+                                    return LEPT_PARSE_INVALID_UNICODE_SURROGATE;
+                                u = COMBINE_HIGH_LOW_SURRO(h, l);
+                            }
+                        } else {
+                            u = h;
+                        }
+                        // Parse the result value into utf-8 format
+                        // and push each single character into the c-stack
+                        int len_ = lept_encode_utf8(c, u);
+                        len += len_;
+                        break;
+                    }
+                    // No match case, just pop out all pushed characters
                     default:
                         lept_context_pop(c, len);
                         return LEPT_PARSE_INVALID_STRING_ESCAPE;
                 }
-                ++len;
-                c->json += 2;
                 break;
             }
             case '\0': {

@@ -113,11 +113,13 @@ static int lept_parse_hex4 (lept_context *c, unsigned *u)
     *u = 0;
     // Assert that there must be 4 hex characters
     for (int i = 0; i < 4; ++i) {
+        int j = 0;
         char ch = *(c->json + i);
-        if (isdigit (ch) || (ch <= 'F' && ch >= 'A'))
-            *u = *u * 16 + (isdigit (ch) ? ch - '0' : 10 + ch - 'A');
-        else
-            return 0;
+        if (isdigit (ch)) j = ch - '0';
+        else if (ch >= 'a' && ch <= 'f') j = 10 + ch - 'a';
+        else if (ch >= 'A' && ch <= 'F') j = 10 + ch - 'A';
+        else return 0;
+        *u = *u * 16 + j;
     }
     c->json += 4;
     return 1;
@@ -240,7 +242,9 @@ static int lept_parse_string(lept_context *c, lept_value *v) {
                             else 
                             {
                                 c->json += 2;
-                                if (!lept_parse_hex4 (c, &l) || !LOW_SURRO(l))
+                                if (!lept_parse_hex4 (c, &l)) 
+                                    return LEPT_PARSE_INVALID_UNICODE_HEX;
+                                if (!LOW_SURRO(l))
                                     return LEPT_PARSE_INVALID_UNICODE_SURROGATE;
                                 u = COMBINE_HIGH_LOW_SURRO(h, l);
                             }

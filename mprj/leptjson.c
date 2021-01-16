@@ -3,10 +3,8 @@
 #include <assert.h>  /* assert() */
 #include <stdlib.h>  /* NULL */
 #include <string.h>
-#include <stdlib.h>
 #include <ctype.h>
 #include <errno.h>
-#include <float.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -333,7 +331,7 @@ double lept_get_number(const lept_value *v) {
     return v->u.num;
 }
 
-void letp_set_boolean(lept_value *v, int b) {
+void lept_set_boolean(lept_value *v, int b) {
     assert(v != NULL);
     v->type = (b == 1) ? LEPT_TRUE : LEPT_FALSE;
 }

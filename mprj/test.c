@@ -204,6 +204,52 @@ static void test_parse_invalid_unicode_surrogate() {
     TEST_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uE000\"");
 }
 
+static void test_parse_array () {
+    const char *test1 = "[ [1,2], [2, 3], [4,5,6]]";
+    lept_value v;
+    lept_init (&v);
+    EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, test1));
+    EXPECT_EQ_INT(3, lept_get_array_size(&v));
+    EXPECT_EQ_INT(LEPT_ARRAY, lept_get_type(lept_get_array_element(&v, 0)));
+    EXPECT_EQ_INT(LEPT_ARRAY, lept_get_type(lept_get_array_element(&v, 1)));
+    EXPECT_EQ_INT(LEPT_ARRAY, lept_get_type(lept_get_array_element(&v, 2)));
+
+    EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type(lept_get_array_element(lept_get_array_element(&v, 0), 0)));
+    EXPECT_EQ_INT(1, lept_get_number(lept_get_array_element(lept_get_array_element(&v, 0), 0)));
+    EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type(lept_get_array_element(lept_get_array_element(&v, 0), 1)));
+    EXPECT_EQ_INT(5, lept_get_number(lept_get_array_element(lept_get_array_element(&v, 2), 1)));
+
+    const char *test2 = "[\"hello, world\", 1, true, null, [\"hello\", false, [1, 3, 4]], 1234]";
+    // Test if parse ok
+    EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, test2));
+
+    // Test if the array attributes are true
+    EXPECT_EQ_INT(6, lept_get_array_size(&v));
+    EXPECT_EQ_INT(LEPT_ARRAY, lept_get_type(lept_get_array_element(&v, 4)));
+
+    // Test the type of every array element
+    EXPECT_EQ_INT(LEPT_STRING, lept_get_type((lept_get_array_element(&v, 0))));
+    EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type((lept_get_array_element(&v, 1))));
+    EXPECT_EQ_INT(LEPT_TRUE  , lept_get_type((lept_get_array_element(&v, 2))));
+    EXPECT_EQ_INT(LEPT_NULL  , lept_get_type((lept_get_array_element(&v, 3))));
+    EXPECT_EQ_INT(LEPT_ARRAY , lept_get_type((lept_get_array_element(&v, 4))));
+    EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type((lept_get_array_element(&v, 5))));
+
+    // Test the value of each array element
+    // tmp and tmp2 points to the array
+    lept_value *tmp = lept_get_array_element(&v, 0), *tmp2 = lept_get_array_element(&v, 4);
+    EXPECT_EQ_STRING("hello, world", lept_get_string(tmp), lept_get_string_length(tmp));
+
+    tmp = lept_get_array_element(lept_get_array_element(&v, 4), 0);
+    EXPECT_EQ_STRING("hello", lept_get_string(tmp), lept_get_string_length(tmp));
+
+    tmp2 = lept_get_array_element(tmp2, 2);
+    EXPECT_EQ_INT(LEPT_ARRAY, lept_get_type(tmp2));
+    EXPECT_EQ_INT(3, lept_get_array_size(tmp2));
+    EXPECT_EQ_INT(3, lept_get_number(lept_get_array_element(tmp2, 1)));
+}
+
+
 static void test_parse() {
     test_parse_null();
     test_parse_true();
@@ -222,10 +268,13 @@ static void test_parse() {
 
     test_parse_invalid_unicode_hex();
     test_parse_invalid_unicode_surrogate();
+
+    test_parse_array();
 }
 
 int main() {
-    test_parse();
+     test_parse();
+    // test_parse_array();
     printf("%d/%d (%3.2f%%) passed\n", test_pass, test_count, test_pass * 100.0 / test_count);
     return main_ret;
 }

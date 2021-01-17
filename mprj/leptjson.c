@@ -8,7 +8,6 @@
 #include <math.h>
 #include <stdio.h>
 
-extern errno;
 
 #define EXPECT(c, ch)       do { assert(*c->json == (ch)); c->json++; } while(0)
 #define ISDIGIT_1TO9(ch)    ((ch) >= '1' && (ch) <= '9')
@@ -18,11 +17,14 @@ extern errno;
 
 const size_t stack_init_size = 256;
 
+
 typedef struct {
     const char* json;
     char *stack;
     int top, capacity;
 }lept_context;
+
+static int lept_parse_value (lept_context *, lept_value *);
 
 void lept_context_init(lept_context *c) {
     assert (c != NULL);
@@ -66,8 +68,11 @@ void *lept_context_pop(lept_context *c, size_t size) {
 void lept_free(lept_value *v) {
     assert(v != NULL);
     if (v->type == LEPT_STRING) {
-        free(v->u.str.addr);
+        free (v->u.str.addr);
         v->u.str.len = 0;
+    } else if (v->type == LEPT_ARRAY) {
+        free (v->u.arr.addr);
+        v->u.arr.size = 0;
     }
     v->type = LEPT_NULL;
 }
@@ -145,7 +150,6 @@ static int lept_encode_utf8 (lept_context *c, unsigned u)
         lept_context_push_single_char (c, 0x80 | ( u        & 0x3F));
         return 4;
     }
-    return 0;
 }
 
 static int lept_parse_number(lept_context *c, lept_value *v)
@@ -191,7 +195,6 @@ static int lept_parse_string(lept_context *c, lept_value *v) {
     assert(c != NULL && v != NULL);
     // Note that EXPECT will increase c->json
     EXPECT(c, '\"');
-    // const char *tmp = c->json;
     int len = 0;
     for (;;) {
         switch (*c->json)
@@ -278,26 +281,64 @@ static int lept_parse_string(lept_context *c, lept_value *v) {
             }
         }
     }
-    return LEPT_PARSE_OK;
+}
+
+void lept_set_array (lept_value *v, lept_context *c, size_t cnt) {
+
+    assert (v != NULL && c != NULL);
+    lept_free (v);
+    size_t arr_size = cnt * sizeof (lept_value);
+    v->u.arr.addr = (lept_value *) malloc (arr_size);
+    v->u.arr.size = cnt;
+    memcpy (v->u.arr.addr, lept_context_pop (c, arr_size), arr_size);
+    v->type = LEPT_ARRAY;
+
 }
 
 
+static int lept_parse_array (lept_context *c, lept_value *v) {
+    assert (c != NULL && v != NULL);
+    EXPECT(c, '[');
+    size_t arr_elem_cnt = 0;
+    for (;;) {
+        lept_parse_whitespace(c);
+        switch (*c->json)
+        {
+            case '\0': {
+                return LEPT_PARSE_INCOMPLETE_ARRAY;
+            }
+            case ']': {
+                lept_set_array (v, c, arr_elem_cnt);
+                ++c->json;
+                return LEPT_PARSE_OK;
+            }
+            case ',': {
+                ++c->json;
+                break;
+            }
+            default: {
+                lept_value tmp;
+                lept_init (&tmp);
+                int ret;
+                if ((ret = lept_parse_value (c, &tmp)) != LEPT_PARSE_OK)
+                    return ret;
+                ++arr_elem_cnt;
+                lept_context_push (c, (const char *)&tmp, sizeof (tmp));
+                break;
+            }
+        }
+    }
+}
+
 static int lept_parse_value(lept_context* c, lept_value* v) {
     switch (*c->json) {
-        case 'n':  return lept_parse_literal(c, v, "null");
-        case 't':  return lept_parse_literal(c, v, "true");
-        case 'f':  return lept_parse_literal(c, v, "false");
-        case '\"': return lept_parse_string (c, v);
-        case '\0': return LEPT_PARSE_EXPECT_VALUE;
-        default:   return lept_parse_number(c, v);
-
-        /*
-            if (*c->json == '-' || isdigit(*c->json)) {
-                return lept_parse_number(c, v);
-            } else {
-                return LEPT_PARSE_INVALID_VALUE;
-            }
-        */
+        case 'n' :  return lept_parse_literal(c, v, "null");
+        case 't' :  return lept_parse_literal(c, v, "true");
+        case 'f' :  return lept_parse_literal(c, v, "false");
+        case '\"':  return lept_parse_string (c, v);
+        case '[' :  return lept_parse_array (c, v);
+        case '\0':  return LEPT_PARSE_EXPECT_VALUE;
+        default  :  return lept_parse_number(c, v);
     }
 }
 
@@ -362,6 +403,19 @@ void lept_set_string (lept_value *v, const char *s, size_t len) {
     v->u.str.len = len;
     v->type = LEPT_STRING;
 }
+
+size_t lept_get_array_size (const lept_value *v) {
+    assert (v->type == LEPT_ARRAY);
+    return v->u.arr.size;
+}
+
+lept_value  *lept_get_array_element (const lept_value *v, size_t idx) {
+    assert (v->type == LEPT_ARRAY);
+    assert (v->u.arr.size > idx);
+    return v->u.arr.addr + idx;
+}
+
+
 
 
 
